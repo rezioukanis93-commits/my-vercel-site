@@ -4,14 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       zip_name:
-        description: "ZIP file name inside the repository"
+        description: 'ZIP file name inside the repository'
         required: true
-        default: "ELVRA-v1-stable.zip"
-
+        default: 'ELVRA-v2-stable.zip'
   push:
     paths:
-      - "*.zip"
-      - ".github/workflows/extract.yml"
+      - '*.zip'
+      - '.github/workflows/extract.yml'
 
 permissions:
   contents: write
@@ -31,79 +30,53 @@ jobs:
         shell: bash
         run: |
           ZIP_NAME="${{ github.event.inputs.zip_name }}"
-
-          if [ -z "$ZIP_NAME" ]; then
-            ZIP_NAME="ELVRA-v1-stable.zip"
-          fi
-
+          if [ -z "$ZIP_NAME" ]; then ZIP_NAME="ELVRA-v2-stable.zip"; fi
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-          echo "Using ZIP: $ZIP_NAME"
 
       - name: Verify ZIP exists
         shell: bash
         run: |
           ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
-
           if [ ! -f "$ZIP_NAME" ]; then
-            echo "ERROR: ZIP file not found:"
-            echo "$ZIP_NAME"
-            echo ""
-            echo "ZIP files in repository:"
-            find . -maxdepth 1 -type f -name "*.zip" -print
+            echo "ZIP file not found: $ZIP_NAME"
+            find . -maxdepth 1 -type f -name '*.zip' -print
             exit 1
           fi
 
-      - name: Extract ZIP
+      - name: Extract ZIP outside repository
         shell: bash
         run: |
           rm -rf /tmp/elvra_extract
           mkdir -p /tmp/elvra_extract
-
           unzip -oq "${{ steps.zip.outputs.zip_name }}" -d /tmp/elvra_extract
 
-      - name: Prepare repository
+      - name: Replace project files
         shell: bash
         run: |
           ZIP_NAME="${{ steps.zip.outputs.zip_name }}"
-
           find . -mindepth 1 -maxdepth 1 \
-            ! -name ".git" \
-            ! -name ".github" \
+            ! -name '.git' \
+            ! -name '.github' \
             ! -name "$ZIP_NAME" \
             -exec rm -rf {} +
-
-      - name: Copy ELVRA project
-        shell: bash
-        run: |
-          rsync -a \
-            --exclude=".git/" \
-            --exclude=".github/workflows/extract.yml" \
-            /tmp/elvra_extract/ ./
-
+          rsync -a /tmp/elvra_extract/ ./
           rm -rf /tmp/elvra_extract
 
-      - name: Show project files
+      - name: Keep workflow
         shell: bash
         run: |
-          echo "ELVRA project successfully extracted."
-          echo ""
-          echo "Root files:"
-          find . -maxdepth 2 -type f \
-            ! -path "./.git/*" \
-            | sort
+          test -f .github/workflows/extract.yml
 
       - name: Commit changes
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo 'No changes to commit.'
             exit 0
           fi
-
-          git commit -m "Extract ELVRA project"
+          git commit -m 'Extract ELVRA v2 project'
           git push
+          
