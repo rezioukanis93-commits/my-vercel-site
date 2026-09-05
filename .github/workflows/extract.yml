@@ -1,0 +1,78 @@
+name: Extract ELVRA ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_name:
+        description: 'ZIP file name inside the repository'
+        required: true
+        default: 'ELVRA-v1-stable.zip'
+  push:
+    paths:
+      - '*.zip'
+      - '.github/workflows/extract.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    env:
+      DEFAULT_ZIP_NAME: 'ELVRA-v1-stable.zip'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick ZIP name
+        id: zip
+        shell: bash
+        run: |
+          ZIP_NAME="${{ github.event.inputs.zip_name }}"
+          if [ -z "$ZIP_NAME" ]; then ZIP_NAME="$DEFAULT_ZIP_NAME"; fi
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "Using ZIP: $ZIP_NAME"
+
+      - name: Verify ZIP exists
+        shell: bash
+        run: |
+          test -f "${{ steps.zip.outputs.zip_name }}" || {
+            echo "ZIP not found: ${{ steps.zip.outputs.zip_name }}"
+            echo "ZIP files present:"
+            find . -maxdepth 1 -type f -name '*.zip' -printf '%f\n' || true
+            exit 1
+          }
+
+      - name: Extract to temporary directory
+        shell: bash
+        run: |
+          rm -rf .elvra_extract
+          mkdir .elvra_extract
+          unzip -oq "${{ steps.zip.outputs.zip_name }}" -d .elvra_extract
+
+      - name: Sync project files to repository root
+        shell: bash
+        run: |
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/workflows/extract.yml' \
+            --exclude='*.zip' \
+            .elvra_extract/ ./
+          rm -rf .elvra_extract
+
+      - name: Commit extracted project
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No extracted changes to commit."
+            exit 0
+          fi
+          git commit -m "Extract ELVRA project from ${{ steps.zip.outputs.zip_name }}"
+          git push
+          
