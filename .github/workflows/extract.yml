@@ -17,7 +17,7 @@ jobs:
         id: find_zip
         shell: bash
         run: |
-          ZIP_NAME="ELVRA-v2-stable.zip"
+          ZIP_NAME="ELVRA-v3-stable.zip"
 
           if [ ! -f "$ZIP_NAME" ]; then
             echo "ERROR: $ZIP_NAME not found"
@@ -69,7 +69,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Deploy ELVRA v2 project"
+          git commit -m "Deploy ELVRA v3 project"
 
       - name: Push changes
         shell: bash
