@@ -1,5 +1,5 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Copy, Download, ExternalLink, Globe, ImagePlus, Instagram, Link2, Mail, MapPin, Phone, Plus, QrCode, Sparkles, Trash2, X, Youtube } from 'lucide-react'
+import React, { useContext, useEffect, useState } from 'react'
+import { ArrowDown, ArrowUp, Check, Copy, Download, ExternalLink, Globe, ImagePlus, Instagram, Link2, Mail, MapPin, Phone, Plus, QrCode, Sparkles, Trash2, X } from 'lucide-react'
 import { QRCodeCanvas } from 'qrcode.react'
 import Layout from '../components/Layout'
 import Toast from '../components/Toast'
@@ -30,7 +30,7 @@ export default function ProfileEditor(){
  const publicUrl=profile?`${APP_URL}/p/${encodeURIComponent(profile.slug)}`:''
  const update=(k,v)=>setProfile(x=>({...x,[k]:v}))
  const upload=async(e,key)=>{const f=e.target.files?.[0];if(!f)return;setBusy(true);setError('');try{const img=await readFileAsImage(f,key==='cover_url'?1600:900);update(key,img);if(key==='avatar_url' && profile?.auto_color){update('accent',await extractAccent(img))}}catch(err){setError(err.message)}finally{setBusy(false)}}
- const saveProfile=async()=>{setBusy(true);setError('');const {error:err}=await supabase.from('profiles').update({display_name:profile.display_name,bio:profile.bio,username:profile.username,slug:profile.username,location:profile.location,website:profile.website,avatar_url:profile.avatar_url,cover_url:profile.cover_url,accent:profile.accent,auto_color:profile.auto_color}).eq('id',session.user.id);setBusy(false);if(err)setError(err.message);else{setMessage(t.save);setTimeout(()=>setMessage(''),1400)}}
+ const saveProfile=async()=>{setBusy(true);setError('');try{const username=(profile.username||'').trim().toLowerCase();if(!/^[a-z0-9_-]{3,32}$/.test(username))throw new Error('Username must be 3–32 characters and use only letters, numbers, _ or -.');const {data:saved,error:err}=await supabase.from('profiles').update({display_name:profile.display_name,bio:profile.bio,username,slug:username,location:profile.location,website:profile.website,avatar_url:profile.avatar_url,cover_url:profile.cover_url,accent:profile.accent,auto_color:profile.auto_color}).eq('id',session.user.id).select('*').single();if(err){if(err.code==='23505')throw new Error('This username is already in use.');throw err}setProfile(saved);setMessage(t.save);setTimeout(()=>setMessage(''),1400)}catch(err){setError(err.message||'Could not save profile.')}finally{setBusy(false)}}
  const add=async()=>{if(!newLink.value.trim())return;setBusy(true);const {data, error:err}=await supabase.from('profile_links').insert({profile_id:session.user.id,type:newLink.type,title:newLink.title||defaults[newLink.type],value:newLink.value.trim(),url:normalValue(newLink.type,newLink.value),sort_order:links.length,active:true}).select().single();setBusy(false);if(err)return setError(err.message);setLinks([...links,data]);setNewLink({type:'instagram',title:'Instagram',value:''})}
  const remove=async(id)=>{await supabase.from('profile_links').delete().eq('id',id);setLinks(ls=>ls.filter(x=>x.id!==id))}
  const move=async(i,delta)=>{const j=i+delta;if(j<0||j>=links.length)return;const next=[...links];[next[i],next[j]]=[next[j],next[i]];setLinks(next);await Promise.all(next.map((x,idx)=>supabase.from('profile_links').update({sort_order:idx}).eq('id',x.id)))}

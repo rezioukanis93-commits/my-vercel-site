@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import Layout from '../components/Layout'
 import StatCard from '../components/StatCard'
 import { supabase, APP_URL } from '../lib/supabase'
+import { loadAnalyticsStats } from '../lib/analytics'
 import { AppContext } from '../main'
 
 function makeSlug(name, id){
@@ -12,7 +13,7 @@ function makeSlug(name, id){
 }
 export default function Dashboard(){
  const {session,t}=useContext(AppContext); const [profile,setProfile]=useState(null); const [stats,setStats]=useState({visits:0,clicks:0,top:[]}); const [loading,setLoading]=useState(true); const [copied,setCopied]=useState(false)
- const load=async()=>{setLoading(true);let {data:p}=await supabase.from('profiles').select('*').eq('id',session.user.id).maybeSingle(); if(!p){const slug=makeSlug(session.user.user_metadata?.display_name || session.user.email?.split('@')[0],session.user.id); const {data:created}=await supabase.from('profiles').insert({id:session.user.id,display_name:session.user.user_metadata?.display_name||'Your Name',slug,bio:'',avatar_url:null,cover_url:null,accent:'#00D084',auto_color:true}).select().single();p=created} setProfile(p); const {data:s}=await supabase.rpc('get_profile_stats',{p_profile_id:session.user.id}); if(s?.[0])setStats({visits:s[0].visits||0,clicks:s[0].clicks||0,top:s[0].top_links||[]}); setLoading(false)}
+ const load=async()=>{setLoading(true);try{let {data:p,error:profileError}=await supabase.from('profiles').select('*').eq('id',session.user.id).maybeSingle(); if(profileError) throw profileError; if(!p){const slug=makeSlug(session.user.user_metadata?.display_name || session.user.email?.split('@')[0],session.user.id); const {data:created,error:createdError}=await supabase.from('profiles').insert({id:session.user.id,username:slug,display_name:session.user.user_metadata?.display_name||'Your Name',slug,bio:'',avatar_url:null,cover_url:null,accent:'#00D084',auto_color:true}).select().single(); if(createdError) throw createdError; p=created} setProfile(p); const s=await loadAnalyticsStats(session.user.id); setStats({visits:s.visits,clicks:s.clicks,top:s.top_links||[]});}catch(e){console.error(e);setStats({visits:0,clicks:0,top:[]})}finally{setLoading(false)}}
  useEffect(()=>{load()},[session.user.id])
  const publicUrl=profile?`${APP_URL}/p/${encodeURIComponent(profile.slug)}`:'#'; const copy=async()=>{await navigator.clipboard.writeText(publicUrl);setCopied(true);setTimeout(()=>setCopied(false),1200)}
  return <Layout><main className="page"><div className="page-header"><div><div className="eyebrow">ELVRA / {t.dashboard.toUpperCase()}</div><h1>{t.welcome}</h1><p>{t.dashboardHint}</p></div><div className="header-actions"><button className="ghost-btn" onClick={copy}><Link2 size={17}/>{copied?t.copied:t.copyLink}</button>{profile&&<a className="primary-btn compact" href={publicUrl} target="_blank" rel="noreferrer"><ExternalLink size={17}/>{t.viewCard}</a>}</div></div>

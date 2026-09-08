@@ -24,23 +24,28 @@ export async function extractAccent(dataUrl) {
   img.src = dataUrl
   await img.decode()
   const canvas = document.createElement('canvas')
-  canvas.width = 40
-  canvas.height = 40
+  canvas.width = 48
+  canvas.height = 48
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
-  ctx.drawImage(img, 0, 0, 40, 40)
-  const { data } = ctx.getImageData(0, 0, 40, 40)
-  let best = { score: -1, r: 0, g: 208, b: 132 }
+  if (!ctx) return '#00D084'
+  ctx.drawImage(img, 0, 0, 48, 48)
+  const { data } = ctx.getImageData(0, 0, 48, 48)
+  const buckets = new Map()
   for (let i = 0; i < data.length; i += 4) {
-    const r = data[i], g = data[i + 1], b = data[i + 2]
-    const max = Math.max(r,g,b), min = Math.min(r,g,b)
-    const sat = max === 0 ? 0 : (max-min)/max
-    const light = (max+min)/510
-    if (light < 0.10 || light > 0.96 || sat < 0.24) continue
-    // Prefer saturated, mid-light colors so black backgrounds and white shirts do not dominate.
-    const score = sat * (1 - Math.abs(light - 0.55))
-    if (score > best.score) best = {score,r,g,b}
+    const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3]
+    if (a < 160) continue
+    const max = Math.max(r, g, b), min = Math.min(r, g, b)
+    const sat = max === 0 ? 0 : (max - min) / max
+    const light = (max + min) / 510
+    if (light < 0.12 || light > 0.94 || sat < 0.28) continue
+    const key = `${Math.round(r / 16)}-${Math.round(g / 16)}-${Math.round(b / 16)}`
+    const score = sat * (1 - Math.abs(light - 0.52))
+    const prev = buckets.get(key)
+    buckets.set(key, prev ? { ...prev, count: prev.count + 1, score: prev.score + score } : { r, g, b, count: 1, score })
   }
-  const boost = v => Math.min(255, Math.round(v * 1.08))
-  const vals=[boost(best.r),boost(best.g),boost(best.b)]
-  return `#${vals.map(v=>v.toString(16).padStart(2,'0')).join('')}`
+  const candidates = [...buckets.values()].sort((a, b) => (b.score * Math.sqrt(b.count)) - (a.score * Math.sqrt(a.count)))
+  const best = candidates[0] || { r: 0, g: 208, b: 132 }
+  const boost = v => Math.min(255, Math.round(v * 1.1))
+  const vals = [boost(best.r), boost(best.g), boost(best.b)]
+  return `#${vals.map(v => v.toString(16).padStart(2, '0')).join('')}`
 }

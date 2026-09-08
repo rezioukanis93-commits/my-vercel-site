@@ -3,6 +3,7 @@ import { Activity, ArrowUpRight, BarChart3, MousePointer2, Users } from 'lucide-
 import Layout from '../components/Layout'
 import StatCard from '../components/StatCard'
 import { supabase } from '../lib/supabase'
+import { loadAnalyticsStats } from '../lib/analytics'
 import { AppContext } from '../main'
 
 export default function Analytics(){
@@ -15,10 +16,8 @@ export default function Analytics(){
   const load=async()=>{
     setLoading(true); setError('')
     try{
-      const {data:s,error:sErr}=await supabase.rpc('get_profile_stats',{p_profile_id:session.user.id})
-      if(sErr) throw sErr
-      const row=s?.[0]||{visits:0,clicks:0,top_links:[]}
-      setStats({visits:Number(row.visits||0),clicks:Number(row.clicks||0),top_links:row.top_links||[]})
+      const s=await loadAnalyticsStats(session.user.id)
+      setStats({visits:s.visits,clicks:s.clicks,top_links:s.top_links})
       const {data:e,error:eErr}=await supabase.from('analytics_events').select('id,event_type,created_at,link:profile_links(title,type)').eq('profile_id',session.user.id).order('created_at',{ascending:false}).limit(20)
       if(eErr) throw eErr
       setEvents(e||[])

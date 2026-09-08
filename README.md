@@ -14,8 +14,9 @@ ELVRA is a multilingual digital-card web app powered by Supabase Auth + PostgreS
 
 ## Supabase
 1. Open Supabase SQL Editor.
-2. Run `supabase-schema.sql` completely. It is safe to re-run and contains the v2 migration.
-3. In Supabase Auth URL settings, allow your Vercel deployment URL and the route `/update-password` as the password recovery redirect.
+2. Run `supabase-schema.sql` completely. It is safe to re-run and now includes the reliability migration for public cards, analytics, stable old-slug aliases, and PostgREST schema-cache refresh.
+3. Wait a few seconds, then reload the app.
+4. In Supabase Auth URL settings, allow your Vercel deployment URL and the route `/update-password` as the password recovery redirect.
 
 The client uses the public anon key and must not contain a service-role key.
 
@@ -25,3 +26,12 @@ Output: Vite default `dist`
 Framework: Vite
 
 `vercel.json` rewrites all app routes to `index.html`, preventing 404s when a public card URL is opened or refreshed directly.
+
+
+## What this build fixes
+- Public cards can be resolved through the public read views even when an older RPC was missing from the API cache.
+- Old public slugs remain valid after a username/slug change through `profile_slug_aliases`.
+- Dashboard and Analytics no longer depend on `get_profile_stats` for the live counters; they read real RLS-protected event counts directly.
+- Analytics RPCs are recreated with the exact signatures used by the app and PostgREST is explicitly reloaded.
+- Avatar-based accent extraction is more stable and uses the detected image colors for the live preview; saving the profile persists the color.
+- Username collisions are handled by the database and shown as a clear error instead of silently failing.

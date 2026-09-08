@@ -140,3 +140,173 @@ begin
   return query select v_visits,v_clicks,v_top;
 end; $$;
 grant execute on function public.get_profile_stats(uuid) to authenticated;
+
+
+-- ELVRA v2.1 reliability migration
+-- Safe to run after the original schema. Adds public read views, stable slug aliases,
+-- robust RPCs, and explicitly asks PostgREST to reload its schema cache.
+
+create table if not exists public.profile_slug_aliases (
+  slug text primary key,
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create index if not exists profile_slug_aliases_profile_idx on public.profile_slug_aliases(profile_id);
+
+alter table public.profile_slug_aliases enable row level security;
+drop policy if exists profile_slug_aliases_owner_select on public.profile_slug_aliases;
+create policy profile_slug_aliases_owner_select on public.profile_slug_aliases
+  for select to authenticated using(auth.uid()=profile_id);
+
+
+create or replace function public.remember_old_profile_slug()
+returns trigger
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if old.slug is not null and new.slug is not null and lower(old.slug) <> lower(new.slug) then
+    if not exists (select 1 from public.profiles where id <> old.id and lower(slug)=lower(old.slug)) then
+      insert into public.profile_slug_aliases(slug, profile_id)
+      values(lower(old.slug), old.id)
+      on conflict (slug) do nothing;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_slug_aliases on public.profiles;
+create trigger profiles_slug_aliases
+before update of slug on public.profiles
+for each row execute function public.remember_old_profile_slug();
+
+-- Keep public reads narrowly scoped to fields that belong on the digital card.
+drop view if exists public.public_profiles cascade;
+create view public.public_profiles as
+select p.id,p.username,p.display_name,p.slug,p.bio,p.location,p.website,p.avatar_url,p.cover_url,p.accent
+from public.profiles p
+union all
+select p.id,p.username,p.display_name,a.slug,p.bio,p.location,p.website,p.avatar_url,p.cover_url,p.accent
+from public.profile_slug_aliases a
+join public.profiles p on p.id=a.profile_id;
+
+drop view if exists public.public_profile_links;
+create view public.public_profile_links as
+select l.id,l.profile_id,l.type,l.title,l.value,l.url,l.sort_order
+from public.profile_links l
+where l.active=true;
+
+grant select on public.public_profiles, public.public_profile_links to anon, authenticated;
+
+-- Recreate public profile RPCs so the signatures are exactly what the app calls.
+drop function if exists public.get_public_profile(text);
+create or replace function public.get_public_profile(p_slug text)
+returns table(id uuid,username text,display_name text,slug text,bio text,location text,website text,avatar_url text,cover_url text,accent text)
+language sql
+security definer
+set search_path=public
+as $$
+  select v.id,v.username,v.display_name,v.slug,v.bio,v.location,v.website,v.avatar_url,v.cover_url,v.accent
+  from public.public_profiles v
+  where lower(v.slug)=lower(trim(p_slug)) or lower(v.username)=lower(trim(p_slug))
+  limit 1;
+$$;
+grant execute on function public.get_public_profile(text) to anon, authenticated;
+
+drop function if exists public.get_public_links(uuid);
+create or replace function public.get_public_links(p_profile_id uuid)
+returns table(id uuid,type text,title text,value text,url text,sort_order integer)
+language sql
+security definer
+set search_path=public
+as $$
+  select l.id,l.type,l.title,l.value,l.url,l.sort_order
+  from public.public_profile_links l
+  where l.profile_id=p_profile_id
+  order by l.sort_order,l.id;
+$$;
+grant execute on function public.get_public_links(uuid) to anon, authenticated;
+
+-- Anonymous visitors may record only visits/clicks through this validated function.
+drop function if exists public.record_profile_event(uuid,text,uuid);
+create or replace function public.record_profile_event(p_profile_id uuid,p_event_type text,p_link_id uuid default null)
+returns void
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if p_event_type not in ('visit','click') then
+    raise exception 'Invalid event type';
+  end if;
+  if not exists (select 1 from public.profiles where id=p_profile_id) then
+    raise exception 'Profile not found';
+  end if;
+  if p_event_type='click' then
+    if p_link_id is null then raise exception 'A link id is required for click events'; end if;
+    if not exists(select 1 from public.profile_links where id=p_link_id and profile_id=p_profile_id and active=true) then
+      raise exception 'Invalid link';
+    end if;
+  else
+    p_link_id := null;
+  end if;
+  insert into public.analytics_events(profile_id,link_id,event_type)
+  values(p_profile_id,p_link_id,p_event_type);
+end;
+$$;
+grant execute on function public.record_profile_event(uuid,text,uuid) to anon, authenticated;
+
+-- Keep the old stats RPC available for any older client, but make it bulletproof.
+drop function if exists public.get_profile_stats(uuid);
+create or replace function public.get_profile_stats(p_profile_id uuid)
+returns table(visits bigint,clicks bigint,top_links jsonb)
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_visits bigint;
+  v_clicks bigint;
+  v_top jsonb;
+begin
+  if auth.uid()<>p_profile_id then raise exception 'Not allowed'; end if;
+  select count(*) into v_visits from public.analytics_events where profile_id=p_profile_id and event_type='visit';
+  select count(*) into v_clicks from public.analytics_events where profile_id=p_profile_id and event_type='click';
+  select coalesce(jsonb_agg(jsonb_build_object('id',q.id,'title',q.title,'type',q.type,'clicks',q.clicks) order by q.clicks desc,q.sort_order),'[]'::jsonb)
+    into v_top
+  from (
+    select l.id,l.title,l.type,l.sort_order,count(e.id)::bigint clicks
+    from public.profile_links l
+    left join public.analytics_events e on e.link_id=l.id and e.event_type='click'
+    where l.profile_id=p_profile_id
+    group by l.id,l.title,l.type,l.sort_order
+    limit 10
+  ) q;
+  return query select v_visits,v_clicks,v_top;
+end;
+$$;
+grant execute on function public.get_profile_stats(uuid) to authenticated;
+
+-- Useful diagnostic RPC: returns whether the current profile and analytics tables are reachable.
+drop function if exists public.get_elvra_health(uuid);
+create or replace function public.get_elvra_health(p_profile_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public
+as $$
+begin
+  if auth.uid()<>p_profile_id then raise exception 'Not allowed'; end if;
+  return jsonb_build_object(
+    'profile_exists', exists(select 1 from public.profiles where id=p_profile_id),
+    'links_count', (select count(*) from public.profile_links where profile_id=p_profile_id),
+    'events_count', (select count(*) from public.analytics_events where profile_id=p_profile_id)
+  );
+end;
+$$;
+grant execute on function public.get_elvra_health(uuid) to authenticated;
+
+-- Ask PostgREST/Supabase API to refresh its schema cache immediately.
+select pg_notify('pgrst','reload schema');
